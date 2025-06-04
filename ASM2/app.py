@@ -19,7 +19,7 @@ Failure to update these values will result in authentication errors or failure t
 # pip install -q -U google-generativeai
 # pip install boto3 werkzeug
 # sudo yum install -y mariadb105
-
+import os
 import boto3  # AWS S3 SDK
 import mysql.connector  # MySQL database connector
 from flask import Flask, request, render_template, jsonify  # Web framework
@@ -31,6 +31,7 @@ from io import BytesIO  # Handling in-memory file objects
 # Configure Gemini API, REPLACE with your Gemini API key
 GOOGLE_API_KEY = "AIzaSyCbYqEpHlbbxN53pDUufhW-HIc0j-lkRP0"
 genai.configure(api_key=GOOGLE_API_KEY)
+UPLOAD_PFX = "uploads/"
 
 # Choose a Gemini model for generating captions
 model = genai.GenerativeModel(model_name="gemini-2.0-pro-exp-02-05")
@@ -59,17 +60,15 @@ app = Flask(__name__)
 
 # AWS S3 Configuration, REPLACE with your S3 bucket
 #TODO: replace with new values
-S3_BUCKET = "image-caption-bucket-rned"
+S3_BUCKET = "image-caption-bucket-rpad"
 S3_REGION = "us-east-1"
-
-
 def get_s3_client():
     """Returns a new S3 client that automatically refreshes credentials if using an IAM role."""
     return boto3.client("s3", region_name=S3_REGION)
 
 # Database Configuration, REPLACE with your RDS credentials
-DB_HOST = "database-1.c5gy6mkigba7.us-east-1.rds.amazonaws.com"
-DB_NAME = "image-caption-db"
+DB_HOST = "image-caption-db.ckggjvfpdeiw.us-east-1.rds.amazonaws.com"
+DB_NAME = "image_caption_db"
 DB_USER = "admin"
 DB_PASSWORD = "Rohith2001"
 
@@ -96,7 +95,6 @@ def allowed_file(filename):
     Checks if the uploaded file has a valid extension.
 
     :param filename: Name of the uploaded file
-    :return: True if valid, False otherwise
     """
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -122,40 +120,19 @@ def upload_image():
 
         if not allowed_file(file.filename):
             return render_template("upload.html", error="Invalid file type")
-
         filename = secure_filename(file.filename)
         file_data = file.read()  # Read file as binary
-
+        filename = UPLOAD_PFX + filename
         # Upload file to S3
         try:
             s3 = get_s3_client()  # Get a fresh S3 client
             s3.upload_fileobj(BytesIO(file_data), S3_BUCKET, filename)
         except Exception as e:
             return render_template("upload.html", error=f"S3 Upload Error: {str(e)}")
-
-        # Generate caption
-        caption = generate_image_caption(file_data)
-
-        # Save metadata to the database
-        try:
-            connection = get_db_connection()
-            if connection is None:
-                return render_template("upload.html", error="Database Error: Unable to connect to the database.")
-            cursor = connection.cursor()
-            cursor.execute(
-                "INSERT INTO captions (image_key, caption) VALUES (%s, %s)",
-                (filename, caption),
-            )
-            connection.commit()
-            connection.close()
-        except Exception as e:
-            return render_template("upload.html", error=f"Database Error: {str(e)}")
-
-        # Prepare image for frontend display using Base64 encoding
         encoded_image = base64.b64encode(file_data).decode("utf-8")
         file_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
-        
-        return render_template("upload.html", image_data=encoded_image, file_url=file_url, caption=caption)
+
+        return render_template("upload.html", image_data=encoded_image, file_url=file_url)
 
     return render_template("upload.html")
 
@@ -178,7 +155,7 @@ def gallery():
             {
                 "url": get_s3_client().generate_presigned_url(
                     "get_object",
-                    Params={"Bucket": S3_BUCKET, "Key": row["image_key"]},
+                    Params={"Bucket": S3_BUCKET,"Key": f"thumbnails/{os.path.basename(row['image_key'])}"},
                     ExpiresIn=3600,  # URL expires in 1 hour
                 ),
                 "caption": row["caption"],
@@ -192,4 +169,4 @@ def gallery():
         return render_template("gallery.html", error=f"Database Error: {str(e)}")
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=80)
